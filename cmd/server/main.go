@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -18,6 +19,11 @@ import (
 	"sync"
 
 	"golang.org/x/crypto/ssh"
+)
+
+var (
+	mu      sync.Mutex
+	tunnels = make(map[string]*ssh.ServerConn)
 )
 
 func main() {
@@ -49,6 +55,8 @@ func main() {
 
 	log.Println("SSH server listening on", addr)
 
+	go listenPublic(":80")
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -70,26 +78,34 @@ func handleClient(conn net.Conn, config *ssh.ServerConfig) {
 
 	log.Println("tunnel client connected:", sshConn.RemoteAddr())
 
-	for req := range reqs {
-		if req.Type == "forward" {
-			parts := strings.SplitN(string(req.Payload), ":", 2)
-			if len(parts) != 2 {
-				req.Reply(false, nil)
-				continue
+	// cleanup when client disconnects
+	defer func() {
+		mu.Lock()
+		for token, c := range tunnels {
+			if c == sshConn {
+				delete(tunnels, token)
+				log.Printf("tunnel removed: %s", token)
 			}
+		}
+		mu.Unlock()
+	}()
 
-			port := parts[0]
-			token := parts[1]
+	for req := range reqs {
+		log.Printf("received request: type=%s", req.Type)
+		if req.Type == "forward" {
+			token := randomToken()
 
-			log.Println("client wants to forward port:", port, "with token")
+			mu.Lock()
+			tunnels[token] = sshConn
+			mu.Unlock()
 
-			go listenPublic(":"+port, sshConn, token)
-			req.Reply(true, nil)
+			log.Printf("tunnel registered: %s.wormhole.mberrishdev.me", token)
+			req.Reply(true, []byte(token))
 		}
 	}
 }
 
-func listenPublic(addr string, sshConn *ssh.ServerConn, token string) {
+func listenPublic(addr string) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Println("listen error:", err)
@@ -107,7 +123,7 @@ func listenPublic(addr string, sshConn *ssh.ServerConn, token string) {
 		}
 
 		go func(userConn net.Conn) {
-			reader, ok := checkToken(userConn, token)
+			sshConn, reader, ok := lookupTunnel(userConn)
 			if !ok {
 				userConn.Close()
 				return
@@ -140,27 +156,38 @@ func listenPublic(addr string, sshConn *ssh.ServerConn, token string) {
 	}
 }
 
-func checkToken(conn net.Conn, secret string) (io.Reader, bool) {
+func lookupTunnel(conn net.Conn) (*ssh.ServerConn, io.Reader, bool) {
 	br := bufio.NewReader(conn)
 
 	req, err := http.ReadRequest(br)
 	if err != nil {
-		return nil, false
+		log.Println("invalid request:", err)
+		return nil, nil, false
 	}
 
-	token := req.URL.Query().Get("token")
-	if token != secret {
-		conn.Write([]byte("HTTP/1.1 403 Forbidden\r\n\r\nForbidden"))
-		return nil, false
+	host := req.Host
+	parts := strings.Split(host, ".")
+
+	if len(parts) == 0 {
+		conn.Write([]byte("HTTP/1.1 400 Bad Request\r\n\r\nBad Request"))
+		return nil, nil, false
+	}
+
+	token := parts[0]
+
+	mu.Lock()
+	sshConn, ok := tunnels[token]
+	mu.Unlock()
+
+	if !ok {
+		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\nTunnel not found"))
+		return nil, nil, false
 	}
 
 	var replay bytes.Buffer
-	err = req.Write(&replay)
-	if err != nil {
-		return nil, false
-	}
+	req.Write(&replay)
 
-	return io.MultiReader(&replay, br), true
+	return sshConn, io.MultiReader(&replay, br), true
 }
 
 func loadOrGenerateKey(path string) (ssh.Signer, error) {
@@ -200,4 +227,45 @@ func loadOrGenerateKey(path string) (ssh.Signer, error) {
 	}
 
 	return signer, nil
+}
+
+func randomToken() string {
+	adjectives := []string{
+		"happy", "quick", "brave", "calm", "bright",
+		"swift", "cool", "smart", "silent", "wild",
+	}
+
+	animals := []string{
+		"panda", "fox", "wolf", "bear", "hawk",
+		"lion", "tiger", "eagle", "falcon", "lynx",
+	}
+
+	// pick random adjective
+	adjIdx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(adjectives))))
+	adj := adjectives[adjIdx.Int64()]
+
+	// pick random animal
+	anIdx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(animals))))
+	animal := animals[anIdx.Int64()]
+
+	// 64-bit random number for high uniqueness
+	var b [8]byte
+	_, _ = rand.Read(b[:])
+
+	num := int64(b[0])<<56 |
+		int64(b[1])<<48 |
+		int64(b[2])<<40 |
+		int64(b[3])<<32 |
+		int64(b[4])<<24 |
+		int64(b[5])<<16 |
+		int64(b[6])<<8 |
+		int64(b[7])
+
+	if num < 0 {
+		num = -num
+	}
+
+	num = num % 1000000
+
+	return fmt.Sprintf("%s-%s-%06d", adj, animal, num)
 }
