@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -15,7 +17,13 @@ func main() {
 	password := flag.String("password", "secret123", "SSH password")
 	local := flag.String("local", "localhost:3000", "local service address")
 	publicPort := flag.String("public-port", "8888", "port to expose on the server")
+	token := flag.String("token", "", "Token to protect public port")
 	flag.Parse()
+
+	host, _, _ := net.SplitHostPort(*server)
+	if *token == "" {
+		*token = randomToken()
+	}
 
 	config := &ssh.ClientConfig{
 		User: "wormhole",
@@ -34,12 +42,15 @@ func main() {
 	log.Println("connected to server")
 
 	// 1. ask server to expose :8888
-	ok, _, err := conn.SendRequest("forward", true, []byte(*publicPort))
+	payload := fmt.Sprintf("%s:%s", *publicPort, *token)
+
+	ok, _, err := conn.SendRequest("forward", true, []byte(payload))
 	if !ok || err != nil {
 		log.Fatal("forward request rejected")
 	}
 
 	log.Printf("server is now forwarding :%s to us", *publicPort)
+	log.Printf("public URL: http://%s:%s/?token=%s", host, *publicPort, *token)
 
 	// 2. handle incoming channels from server
 	channels := conn.HandleChannelOpen("tunnel")
@@ -86,4 +97,10 @@ func handleChannel(newChannel ssh.NewChannel, localAddr string) {
 	}()
 
 	wg.Wait()
+}
+
+func randomToken() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
 }

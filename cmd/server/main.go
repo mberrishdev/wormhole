@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -21,9 +22,7 @@ import (
 
 func main() {
 	var sshPort int
-	var token string
 	flag.IntVar(&sshPort, "ssh-port", 2222, "SSH listen port")
-	flag.StringVar(&token, "token", "sampletoken", "Token to protect public port")
 	flag.Parse()
 
 	signer, err := loadOrGenerateKey("server.key")
@@ -56,11 +55,11 @@ func main() {
 			log.Println("accept error:", err)
 			continue
 		}
-		go handleClient(conn, config, token)
+		go handleClient(conn, config)
 	}
 }
 
-func handleClient(conn net.Conn, config *ssh.ServerConfig, token string) {
+func handleClient(conn net.Conn, config *ssh.ServerConfig) {
 	sshConn, _, reqs, err := ssh.NewServerConn(conn, config)
 	if err != nil {
 		log.Println("handshake failed:", err)
@@ -73,8 +72,17 @@ func handleClient(conn net.Conn, config *ssh.ServerConfig, token string) {
 
 	for req := range reqs {
 		if req.Type == "forward" {
-			port := string(req.Payload)
-			log.Println("client wants to forward port:", port)
+			parts := strings.SplitN(string(req.Payload), ":", 2)
+			if len(parts) != 2 {
+				req.Reply(false, nil)
+				continue
+			}
+
+			port := parts[0]
+			token := parts[1]
+
+			log.Println("client wants to forward port:", port, "with token")
+
 			go listenPublic(":"+port, sshConn, token)
 			req.Reply(true, nil)
 		}
