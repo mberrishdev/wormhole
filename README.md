@@ -5,13 +5,15 @@ A lightweight tunnel that exposes a local port to the public internet via an SSH
 ## How it works
 
 1. The **server** runs on a public machine and listens for SSH connections.
-2. The **client** connects to the server over SSH and requests that a public port be opened.
-3. Incoming HTTP traffic on that port is validated by a token, then forwarded through the SSH tunnel to your local service.
+2. The **client** connects and receives a randomly generated readable token (e.g. `calm-fox-535990`).
+3. The server routes incoming traffic for `<token>.wormhole.mberrishdev.me` through the SSH tunnel to your local service.
+
+Each tunnel gets a unique subdomain — no port numbers or query parameters needed.
 
 ## Requirements
 
 - Go 1.21+
-- A publicly accessible server (e.g. an EC2 instance)
+- A publicly accessible server with a wildcard DNS record pointing `*.wormhole.<your-domain>` at it
 
 ## Build
 
@@ -42,29 +44,25 @@ Run on your local machine:
 ```bash
 ./wormhole-client \
   --server <your-server-ip>:2222 \
-  --local localhost:3000 \
-  --public-port 8888 \
-  --token mysecrettoken
+  --local localhost:3000
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--server` | `13.53.40.46:2222` | SSH server address |
+| `--server` | `13.62.136.105:2222` | SSH server address |
 | `--password` | `secret123` | SSH password |
 | `--local` | `localhost:3000` | Local service to expose |
-| `--public-port` | `8888` | Port to open on the server |
-| `--token` | *(random)* | Token to protect the public endpoint |
 
-The client prints a public URL once connected:
+Once connected, the client prints the public URL:
 
 ```
-public URL: http://<server-ip>:8888/?token=<token>
+2026/05/20 00:37:22 tunnel is live at: http://calm-fox-535990.wormhole.mberrishdev.me
 ```
 
-Anyone with that URL can reach your local service. Requests without the correct token receive a `403 Forbidden`.
+Anyone with that URL can reach your local service.
 
 ## Security notes
 
 - The SSH password is hardcoded (`secret123`) — change it before deploying.
 - `HostKeyCallback` is set to `InsecureIgnoreHostKey` — pin the host key for production use.
-- The token is passed as a query parameter; use HTTPS in front of the server for production traffic.
+- Add TLS termination (e.g. Caddy or nginx with Let's Encrypt wildcard cert) in front of the server for production traffic.
