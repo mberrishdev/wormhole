@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,10 @@ import (
 )
 
 func main() {
+	var sshPort int
+	flag.IntVar(&sshPort, "ssh-port", 2222, "SSH listen port")
+	flag.Parse()
+
 	signer, err := loadOrGenerateKey("server.key")
 	if err != nil {
 		log.Fatal(err)
@@ -34,7 +39,9 @@ func main() {
 
 	// listen for raw tcp connection
 
-	ln, err := net.Listen("tcp", ":2222")
+	addr := fmt.Sprintf(":%d", sshPort)
+
+	ln, err := net.Listen("tcp", addr)
 
 	if err != nil {
 		log.Fatal(err)
@@ -42,7 +49,7 @@ func main() {
 
 	defer ln.Close()
 
-	log.Println("SSH server listening on :2222")
+	log.Println("SSH server listening on", addr)
 
 	// accept raw TCP connection
 	conn, err := ln.Accept()
