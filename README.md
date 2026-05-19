@@ -1,68 +1,154 @@
 # Wormhole
 
-A lightweight tunnel that exposes a local port to the public internet via an SSH relay server — similar to ngrok, but self-hosted.
+A lightweight self-hosted tunnel that exposes a local port to the public internet via an SSH relay server — similar to ngrok, but fully under your control.
+
+---
 
 ## How it works
 
-1. The **server** runs on a public machine and listens for SSH connections.
-2. The **client** connects and receives a randomly generated readable token (e.g. `calm-fox-535990`).
-3. The server routes incoming traffic for `<token>.wormhole.mberrishdev.me` through the SSH tunnel to your local service.
+Wormhole creates a secure tunnel between your local machine and a public SSH server.
 
-Each tunnel gets a unique subdomain — no port numbers or query parameters needed.
+1. A server runs on a public machine and accepts SSH connections.
+2. A client connects to the server and requests a tunnel.
+3. The server assigns a unique readable token (e.g. `calm-fox-535990`).
+4. Traffic to:
+
+```
+https://calm-fox-535990.wormhole.mberrishdev.me
+```
+
+is forwarded through the SSH tunnel to your local service.
+
+Each tunnel is isolated and ephemeral.
+
+---
 
 ## Requirements
 
 - Go 1.21+
-- A publicly accessible server with a wildcard DNS record pointing `*.wormhole.<your-domain>` at it
+- A publicly accessible server (VPS / EC2 / etc.)
+- Wildcard DNS configured:
+
+```
+*.wormhole.your-domain.com → your server IP
+```
+
+- Optional but recommended: TLS termination (Caddy / Nginx / Cloudflare)
+
+---
+
+## Install (recommended)
+
+The easiest way to install the client is:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mberrishdev/wormhole/main/install.sh | bash
+```
+
+After installation:
+
+```bash
+chmod +x wormhole
+
+wormhole
+```
 
 ## Build
 
-```bash
-# Build the server
-go build -o wormhole-server ./cmd/server
+### Server
 
-# Build the client
+```bash
+go build -o wormhole-server ./cmd/server
+```
+
+### Client
+
+```bash
 go build -o wormhole-client ./cmd/client
 ```
 
+---
+
 ## Usage
 
-### Server
-
-Run on your public machine:
+### Server (public machine)
 
 ```bash
 ./wormhole-server --ssh-port 2222
 ```
 
-The server generates a persistent `server.key` (Ed25519) on first run.
+On first run:
 
-### Client
+- a persistent Ed25519 key is generated (`server.key`)
+- server starts listening for SSH tunnels
 
-Run on your local machine:
+---
+
+### Client (local machine)
 
 ```bash
-./wormhole-client \
-  --server <your-server-ip>:2222 \
-  --local localhost:3000
+./wormhole-client   --server <your-server-ip>:2222   --local localhost:3000
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--server` | `13.62.136.105:2222` | SSH server address |
-| `--password` | `secret123` | SSH password |
-| `--local` | `localhost:3000` | Local service to expose |
+---
 
-Once connected, the client prints the public URL:
+## Client flags
+
+| Flag         | Default              | Description                 |
+| ------------ | -------------------- | --------------------------- |
+| `--server`   | `13.62.136.105:2222` | SSH server address          |
+| `--password` | `secret123`          | SSH authentication password |
+| `--local`    | `localhost:3000`     | Local service to expose     |
+
+---
+
+## Output
+
+Once connected:
 
 ```
-2026/05/20 00:37:22 tunnel is live at: http://calm-fox-535990.wormhole.mberrishdev.me
+tunnel is live at:
+http://calm-fox-535990.wormhole.mberrishdev.me
 ```
 
-Anyone with that URL can reach your local service.
+Anyone can access your local service through this URL.
+
+---
 
 ## Security notes
 
-- The SSH password is hardcoded (`secret123`) — change it before deploying.
-- `HostKeyCallback` is set to `InsecureIgnoreHostKey` — pin the host key for production use.
-- Add TLS termination (e.g. Caddy or nginx with Let's Encrypt wildcard cert) in front of the server for production traffic.
+This project is currently in early-stage development.
+
+Before production use:
+
+- Change default SSH password (`secret123`)
+- Do not use `InsecureIgnoreHostKey` in production
+- Do not expose raw SSH without firewall rules
+
+Recommended production setup:
+
+- Use SSH key authentication instead of passwords
+- Enable host key verification (pin server key)
+- Add TLS termination using Caddy, Nginx, or Cloudflare
+
+---
+
+## Architecture summary
+
+Client (local machine)
+↓ SSH tunnel
+Wormhole server (VPS)
+↓ routing
+Wildcard DNS (\*.wormhole.domain)
+↓
+Public users → local application
+
+---
+
+## Future improvements
+
+- `wormhole connect 3000` CLI UX
+- automatic install script (`curl | bash`)
+- TLS built-in support
+- multi-tunnel sessions
+- dashboard UI
