@@ -1,0 +1,7 @@
+# binaries
+wormhole-server
+wormhole-client
+
+# Go build cache
+*.exe
+*.out
