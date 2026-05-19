@@ -1,0 +1,74 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      # ----------------------------
+      # Generate version v0.0.x
+      # ----------------------------
+      - name: Generate version
+        id: version
+        run: |
+          git fetch --tags
+
+          LAST_TAG=$(git tag --list "v0.0.*" --sort=-v:refname | head -n 1)
+
+          if [ -z "$LAST_TAG" ]; then
+            NEW_VERSION="v0.0.1"
+          else
+            LAST_NUM=$(echo $LAST_TAG | cut -d '.' -f 3)
+            NEW_NUM=$((LAST_NUM + 1))
+            NEW_VERSION="v0.0.$NEW_NUM"
+          fi
+
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      # ----------------------------
+      # Build binaries (ALL PLATFORMS)
+      # ----------------------------
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+
+          # Linux
+          GOOS=linux GOARCH=amd64 go build -o dist/wormhole-linux-amd64
+          GOOS=linux GOARCH=arm64 go build -o dist/wormhole-linux-arm64
+
+          # macOS
+          GOOS=darwin GOARCH=amd64 go build -o dist/wormhole-darwin-amd64
+          GOOS=darwin GOARCH=arm64 go build -o dist/wormhole-darwin-arm64
+
+          # Windows
+          GOOS=windows GOARCH=amd64 go build -o dist/wormhole-windows-amd64.exe
+          GOOS=windows GOARCH=arm64 go build -o dist/wormhole-windows-arm64.exe
+
+      # ----------------------------
+      # Create GitHub Release
+      # ----------------------------
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          files: dist/*
