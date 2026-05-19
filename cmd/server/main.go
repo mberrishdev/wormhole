@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
@@ -10,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 
@@ -18,7 +21,9 @@ import (
 
 func main() {
 	var sshPort int
+	var token string
 	flag.IntVar(&sshPort, "ssh-port", 2222, "SSH listen port")
+	flag.StringVar(&token, "token", "sampletoken", "Token to protect public port")
 	flag.Parse()
 
 	signer, err := loadOrGenerateKey("server.key")
@@ -26,7 +31,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// build SSH server config
 	config := &ssh.ServerConfig{
 		PasswordCallback: func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 			if string(password) == "secret123" {
@@ -37,32 +41,32 @@ func main() {
 	}
 	config.AddHostKey(signer)
 
-	// listen for raw tcp connection
-
 	addr := fmt.Sprintf(":%d", sshPort)
-
 	ln, err := net.Listen("tcp", addr)
-
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	defer ln.Close()
 
 	log.Println("SSH server listening on", addr)
 
-	// accept raw TCP connection
-	conn, err := ln.Accept()
-	if err != nil {
-		log.Fatal(err)
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Println("accept error:", err)
+			continue
+		}
+		go handleClient(conn, config, token)
 	}
+}
 
-	// upgrade TCP -> SSH
+func handleClient(conn net.Conn, config *ssh.ServerConfig, token string) {
 	sshConn, _, reqs, err := ssh.NewServerConn(conn, config)
 	if err != nil {
-		log.Fatal(err)
+		log.Println("handshake failed:", err)
+		conn.Close()
+		return
 	}
-
 	defer sshConn.Close()
 
 	log.Println("tunnel client connected:", sshConn.RemoteAddr())
@@ -71,10 +75,84 @@ func main() {
 		if req.Type == "forward" {
 			port := string(req.Payload)
 			log.Println("client wants to forward port:", port)
-			go listenPublic(":"+port, sshConn)
+			go listenPublic(":"+port, sshConn, token)
 			req.Reply(true, nil)
 		}
 	}
+}
+
+func listenPublic(addr string, sshConn *ssh.ServerConn, token string) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Println("listen error:", err)
+		return
+	}
+	defer ln.Close()
+
+	log.Println("public listener started on", addr)
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Println("accept error:", err)
+			continue
+		}
+
+		go func(userConn net.Conn) {
+			reader, ok := checkToken(userConn, token)
+			if !ok {
+				userConn.Close()
+				return
+			}
+
+			channel, requests, err := sshConn.OpenChannel("tunnel", nil)
+			if err != nil {
+				log.Println("open channel error:", err)
+				userConn.Close()
+				return
+			}
+			defer channel.Close()
+			go ssh.DiscardRequests(requests)
+
+			var wg sync.WaitGroup
+			wg.Add(2)
+
+			go func() {
+				defer wg.Done()
+				io.Copy(channel, reader)
+			}()
+
+			go func() {
+				defer wg.Done()
+				io.Copy(userConn, channel)
+			}()
+
+			wg.Wait()
+		}(conn)
+	}
+}
+
+func checkToken(conn net.Conn, secret string) (io.Reader, bool) {
+	br := bufio.NewReader(conn)
+
+	req, err := http.ReadRequest(br)
+	if err != nil {
+		return nil, false
+	}
+
+	token := req.URL.Query().Get("token")
+	if token != secret {
+		conn.Write([]byte("HTTP/1.1 403 Forbidden\r\n\r\nForbidden"))
+		return nil, false
+	}
+
+	var replay bytes.Buffer
+	err = req.Write(&replay)
+	if err != nil {
+		return nil, false
+	}
+
+	return io.MultiReader(&replay, br), true
 }
 
 func loadOrGenerateKey(path string) (ssh.Signer, error) {
@@ -84,7 +162,6 @@ func loadOrGenerateKey(path string) (ssh.Signer, error) {
 		if err != nil {
 			return nil, err
 		}
-
 		return signer, nil
 	}
 
@@ -115,59 +192,4 @@ func loadOrGenerateKey(path string) (ssh.Signer, error) {
 	}
 
 	return signer, nil
-}
-
-func listenPublic(addr string, sshConn *ssh.ServerConn) {
-	ln, err := net.Listen("tcp", addr)
-
-	if err != nil {
-		log.Println("listen error:", err)
-		return
-	}
-
-	defer ln.Close()
-
-	log.Println("public listener started on", addr)
-
-	for {
-		conn, err := ln.Accept()
-
-		if err != nil {
-			log.Println("accept error:", err)
-			continue
-		}
-
-		go func(userConn net.Conn) {
-
-			channel, requests, err := sshConn.OpenChannel(
-				"tunnel",
-				nil,
-			)
-
-			if err != nil {
-				log.Println("open channel error:", err)
-				return
-			}
-
-			defer channel.Close()
-			go ssh.DiscardRequests(requests)
-
-			var wg sync.WaitGroup
-			wg.Add(2)
-
-			go func() {
-				defer wg.Done()
-				io.Copy(channel, userConn)
-			}()
-
-			go func() {
-				defer wg.Done()
-				io.Copy(userConn, channel)
-			}()
-
-			wg.Wait()
-
-		}(conn)
-	}
-
 }
