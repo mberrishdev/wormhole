@@ -1,0 +1,148 @@
+# Wormhole — Deployment Guide
+
+## Prerequisites
+
+- AWS EC2 instance (t2.micro or t3.micro, Ubuntu 24.04)
+- Security group with ports **22**, **2222**, **8888** open
+- Your `.pem` key file from AWS
+
+---
+
+## 1. Build the Server Binary
+
+On your **laptop**, inside the `wormhole` project root:
+
+```bash
+GOOS=linux GOARCH=amd64 go build -o wormhole-server ./cmd/server
+```
+
+This cross-compiles a Linux binary from your Mac/Windows machine.
+
+---
+
+## 2. Copy Binary to EC2
+
+```bash
+scp -i ~/Downloads/wormhole.pem wormhole-server ubuntu@<your-ec2-ip>:~/
+```
+
+Replace `<your-ec2-ip>` with your actual EC2 public IP (e.g. `13.53.40.46`).
+
+---
+
+## 3. Run the Server on EC2
+
+SSH into your EC2 instance:
+
+```bash
+ssh -i ~/Downloads/wormhole.pem ubuntu@<your-ec2-ip>
+```
+
+Make the binary executable and run it:
+
+```bash
+chmod +x wormhole-server
+./wormhole-server
+```
+
+You should see:
+
+```
+SSH server listening on :2222
+```
+
+---
+
+## 4. Update the Client
+
+On your **laptop**, update `cmd/client/main.go` — change `localhost:2222` to your EC2 IP:
+
+```go
+conn, err := ssh.Dial("tcp", "13.53.40.46:2222", config)
+```
+
+Build and run the client:
+
+```bash
+go run cmd/client/main.go
+```
+
+You should see:
+
+```
+connected to server
+server is now forwarding :8888 to us
+```
+
+---
+
+## 5. Test It
+
+Start your local app on port 3000:
+
+```bash
+python3 -m http.server 3000
+```
+
+Open your browser and visit:
+
+```
+http://<your-ec2-ip>:8888
+```
+
+You should see your local app served through the tunnel.
+
+---
+
+## 6. Keep Server Running (Optional)
+
+To keep the server running after you close the SSH session:
+
+```bash
+nohup ./wormhole-server &
+```
+
+Or use `screen`:
+
+```bash
+screen -S wormhole
+./wormhole-server
+# press Ctrl+A then D to detach
+```
+
+---
+
+## Port Reference
+
+| Port | Used by         | Direction         |
+| ---- | --------------- | ----------------- |
+| 22   | AWS SSH access  | your laptop → EC2 |
+| 2222 | wormhole tunnel | your laptop → EC2 |
+| 8888 | public traffic  | internet → EC2    |
+
+---
+
+## Troubleshooting
+
+**Permission denied on .pem file:**
+
+```bash
+chmod 400 ~/Downloads/wormhole.pem
+```
+
+**Port already in use:**
+
+```bash
+lsof -i :2222
+kill <PID>
+```
+
+**Client can't connect to server:**
+
+- Check EC2 security group has port 2222 open
+- Make sure `wormhole-server` is running on EC2
+
+**Browser can't reach :8888:**
+
+- Check EC2 security group has port 8888 open
+- Make sure wormhole client is running and connected

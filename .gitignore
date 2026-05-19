@@ -5,3 +5,5 @@ wormhole-client
 # Go build cache
 *.exe
 *.out
+
+server.key
