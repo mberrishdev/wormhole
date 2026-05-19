@@ -10,25 +10,18 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
-
-      # ----------------------------
-      # Generate version v0.0.x
-      # ----------------------------
       - name: Generate version
-        id: version
+        id: ver
         run: |
           git fetch --tags
 
@@ -38,37 +31,75 @@ jobs:
             NEW_VERSION="v0.0.1"
           else
             LAST_NUM=$(echo $LAST_TAG | cut -d '.' -f 3)
-            NEW_NUM=$((LAST_NUM + 1))
-            NEW_VERSION="v0.0.$NEW_NUM"
+            NEW_VERSION="v0.0.$((LAST_NUM + 1))"
           fi
 
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
-      # ----------------------------
-      # Build binaries (ALL PLATFORMS)
-      # ----------------------------
-      - name: Build binaries
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Build binary
         run: |
           mkdir -p dist
 
-          # Linux
-          GOOS=linux GOARCH=amd64 go build -o dist/wormhole-linux-amd64
-          GOOS=linux GOARCH=arm64 go build -o dist/wormhole-linux-arm64
+          BINARY_NAME=wormhole-${{ matrix.goos }}-${{ matrix.goarch }}
 
-          # macOS
-          GOOS=darwin GOARCH=amd64 go build -o dist/wormhole-darwin-amd64
-          GOOS=darwin GOARCH=arm64 go build -o dist/wormhole-darwin-arm64
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME="${BINARY_NAME}.exe"
+          fi
 
-          # Windows
-          GOOS=windows GOARCH=amd64 go build -o dist/wormhole-windows-amd64.exe
-          GOOS=windows GOARCH=arm64 go build -o dist/wormhole-windows-arm64.exe
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+          go build -o dist/$BINARY_NAME
 
-      # ----------------------------
-      # Create GitHub Release
-      # ----------------------------
-      - name: Create Release
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifacts
+        run: |
+          find dist -type f -exec mv {} dist/ \;
+          find dist -type d -empty -delete
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.version.outputs.version }}
-          name: ${{ steps.version.outputs.version }}
+          tag_name: ${{ needs.version.outputs.version }}
+          name: ${{ needs.version.outputs.version }}
           files: dist/*
