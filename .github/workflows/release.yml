@@ -1,4 +1,4 @@
-name: release
+name: release-client
 
 on:
   workflow_dispatch:
@@ -7,18 +7,25 @@ permissions:
   contents: write
 
 jobs:
-  version:
+  release:
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      # ----------------------------
+      # Generate version v0.0.x
+      # ----------------------------
       - name: Generate version
-        id: ver
+        id: version
         run: |
           git fetch --tags
 
@@ -33,70 +40,30 @@ jobs:
 
           echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
-  build:
-    needs: version
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
-
-      - name: Build binary
+      # ----------------------------
+      # Build CLIENT ONLY
+      # ----------------------------
+      - name: Build client binaries
         run: |
           mkdir -p dist
 
-          BINARY_NAME=wormhole-${{ matrix.goos }}-${{ matrix.goarch }}
+          OUT="dist/wormhole-client"
 
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="${BINARY_NAME}.exe"
-          fi
+          GOOS=linux GOARCH=amd64 go build -o ${OUT}-linux-amd64 ./cmd/client
+          GOOS=linux GOARCH=arm64 go build -o ${OUT}-linux-arm64 ./cmd/client
 
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o dist/$BINARY_NAME
+          GOOS=darwin GOARCH=amd64 go build -o ${OUT}-darwin-amd64 ./cmd/client
+          GOOS=darwin GOARCH=arm64 go build -o ${OUT}-darwin-arm64 ./cmd/client
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*
+          GOOS=windows GOARCH=amd64 go build -o ${OUT}-windows-amd64.exe ./cmd/client
+          GOOS=windows GOARCH=arm64 go build -o ${OUT}-windows-arm64.exe ./cmd/client
 
-  release:
-    needs: [version, build]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-
-      - name: Flatten artifacts
-        run: |
-          find dist -type f -exec mv {} dist/ \;
-          find dist -type d -empty -delete
-
-      - name: Create GitHub Release
+      # ----------------------------
+      # Create GitHub Release
+      # ----------------------------
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.version.outputs.version }}
-          name: ${{ needs.version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
           files: dist/*
