@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/mberrishdev/wormhole/internal/dashboard"
 )
 
 func main() {
@@ -40,17 +42,21 @@ func main() {
 
 	token := string(reply)
 
+	dashboard.EnsureRunning(":4040")
+	dashboard.Register(token, *local, "https://"+token+".wormhole.mberrishdev.me")
+	defer dashboard.Unregister(token)
+
 	log.Printf("tunnel is live at: https://%s.wormhole.mberrishdev.me", token)
+	log.Println("dashboard: http://localhost:4040")
 
 	channels := conn.HandleChannelOpen("tunnel")
 
 	for newChannel := range channels {
-		go handleChannel(newChannel, *local)
+		go handleChannel(newChannel, *local, token)
 	}
 }
 
-func handleChannel(newChannel ssh.NewChannel, localAddr string) {
-	// 3a. accept incoming SSH channel
+func handleChannel(newChannel ssh.NewChannel, localAddr, token string) {
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
 		log.Println("accept channel error:", err)
@@ -58,10 +64,8 @@ func handleChannel(newChannel ssh.NewChannel, localAddr string) {
 	}
 	defer channel.Close()
 
-	// 3b. discard SSH requests
 	go ssh.DiscardRequests(requests)
 
-	// 3c. connect to local service
 	localConn, err := net.Dial("tcp", localAddr)
 	if err != nil {
 		log.Println("local dial error:", err)
@@ -69,9 +73,11 @@ func handleChannel(newChannel ssh.NewChannel, localAddr string) {
 	}
 	defer localConn.Close()
 
+	dashboard.Connect(token)
+	defer dashboard.Disconnect(token)
+
 	log.Println("new tunnel connection")
 
-	// 3d. pipe traffic both directions
 	var wg sync.WaitGroup
 	wg.Add(2)
 
