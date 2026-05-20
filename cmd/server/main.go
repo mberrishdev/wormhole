@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -55,7 +56,11 @@ func main() {
 
 	log.Println("SSH server listening on", addr)
 
-	go listenPublic(":80")
+	go listenPublic(":443")
+
+	go http.ListenAndServe(":80", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://"+r.Host+r.RequestURI, 301)
+	}))
 
 	for {
 		conn, err := ln.Accept()
@@ -106,7 +111,21 @@ func handleClient(conn net.Conn, config *ssh.ServerConfig) {
 }
 
 func listenPublic(addr string) {
-	ln, err := net.Listen("tcp", addr)
+	cert, err := tls.LoadX509KeyPair(
+		"/etc/letsencrypt/live/wormhole.mberrishdev.me/fullchain.pem",
+		"/etc/letsencrypt/live/wormhole.mberrishdev.me/privkey.pem",
+	)
+
+	if err != nil {
+		log.Fatal("load cert:", err)
+	}
+
+	log.Println("TLS cert loaded successfully")
+
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	ln, err := tls.Listen("tcp", addr, tlsConfig)
+
 	if err != nil {
 		log.Println("listen error:", err)
 		return

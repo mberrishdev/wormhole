@@ -16,11 +16,6 @@ func main() {
 	local := flag.String("local", "localhost:3000", "local service address")
 	flag.Parse()
 
-	// host, _, _ := net.SplitHostPort(*server)
-	// if *token == "" {
-	// 	*token = randomToken()
-	// }
-
 	config := &ssh.ClientConfig{
 		User: "wormhole",
 		Auth: []ssh.AuthMethod{
@@ -37,9 +32,6 @@ func main() {
 
 	log.Println("connected to server")
 
-	// 1. ask server to expose :8888
-	// payload := fmt.Sprintf("%s:%s", *publicPort, *token)
-
 	ok, reply, err := conn.SendRequest("forward", true, nil)
 	log.Printf("ok=%v reply=%s err=%v", ok, string(reply), err)
 	if !ok || err != nil {
@@ -48,9 +40,8 @@ func main() {
 
 	token := string(reply)
 
-	log.Printf("tunnel is live at: http://%s.wormhole.mberrishdev.me", token)
+	log.Printf("tunnel is live at: https://%s.wormhole.mberrishdev.me", token)
 
-	// 2. handle incoming channels from server
 	channels := conn.HandleChannelOpen("tunnel")
 
 	for newChannel := range channels {
