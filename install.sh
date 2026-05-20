@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 REPO="mberrishdev/wormhole"
-OS="darwin"
 ARCH=$(uname -m)
 
 if [ "$ARCH" = "arm64" ]; then
@@ -12,10 +11,15 @@ fi
 
 URL="https://github.com/$REPO/releases/latest/download/$FILE"
 
+if [ -f /usr/local/bin/wormhole ]; then
+  echo "Removing existing installation..."
+  sudo rm /usr/local/bin/wormhole
+fi
+
 echo "Downloading $URL"
 
-curl -L $URL -o wormhole
-chmod +x wormhole
-sudo mv wormhole /usr/local/bin/wormhole
+curl -fsSL $URL -o /tmp/wormhole
+chmod +x /tmp/wormhole
+sudo mv /tmp/wormhole /usr/local/bin/wormhole
 
 echo "Installed wormhole"
