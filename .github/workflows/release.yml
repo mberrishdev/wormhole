@@ -100,4 +100,4 @@ jobs:
         with:
           tag_name: ${{ needs.version.outputs.version }}
           name: ${{ needs.version.outputs.version }}
-          files: dist/*ƒ
+          files: dist/*
