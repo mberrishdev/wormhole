@@ -52,11 +52,12 @@ func main() {
 	channels := conn.HandleChannelOpen("tunnel")
 
 	for newChannel := range channels {
-		go handleChannel(newChannel, *local, token)
+		ip := string(newChannel.ExtraData())
+		go handleChannel(newChannel, *local, token, ip)
 	}
 }
 
-func handleChannel(newChannel ssh.NewChannel, localAddr, token string) {
+func handleChannel(newChannel ssh.NewChannel, localAddr, token, ip string) {
 	channel, requests, err := newChannel.Accept()
 	if err != nil {
 		log.Println("accept channel error:", err)
@@ -73,8 +74,8 @@ func handleChannel(newChannel ssh.NewChannel, localAddr, token string) {
 	}
 	defer localConn.Close()
 
-	dashboard.Connect(token)
-	defer dashboard.Disconnect(token)
+	dashboard.Connect(token, ip)
+	defer dashboard.Disconnect(token, ip)
 
 	log.Println("new tunnel connection")
 

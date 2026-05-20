@@ -16,6 +16,8 @@ type Session struct {
 	PublicURL   string
 	StartTime   time.Time
 	Connections int
+	IPs         []string
+	ipCounts    map[string]int
 }
 
 var (
@@ -53,32 +55,47 @@ func Unregister(token string) {
 	http.Post("http://localhost:4040/api/unregister", "application/json", bytes.NewReader(body))
 }
 
-func Connect(token string) {
-	body := []byte(`{"Token":"` + token + `"}`)
+func Connect(token, ip string) {
+	body, _ := json.Marshal(struct{ Token, IP string }{token, ip})
 	http.Post("http://localhost:4040/api/connect", "application/json", bytes.NewReader(body))
 }
 
-func Disconnect(token string) {
-	body := []byte(`{"Token":"` + token + `"}`)
+func Disconnect(token, ip string) {
+	body, _ := json.Marshal(struct{ Token, IP string }{token, ip})
 	http.Post("http://localhost:4040/api/disconnect", "application/json", bytes.NewReader(body))
 }
 
 func handleConnect(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Token string }
+	var req struct{ Token, IP string }
 	json.NewDecoder(r.Body).Decode(&req)
 	mu.Lock()
 	if s, ok := sessions[req.Token]; ok {
 		s.Connections++
+		s.ipCounts[req.IP]++
+		if s.ipCounts[req.IP] == 1 {
+			s.IPs = append(s.IPs, req.IP)
+		}
 	}
 	mu.Unlock()
 }
 
 func handleDisconnect(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Token string }
+	var req struct{ Token, IP string }
 	json.NewDecoder(r.Body).Decode(&req)
 	mu.Lock()
 	if s, ok := sessions[req.Token]; ok && s.Connections > 0 {
 		s.Connections--
+		s.ipCounts[req.IP]--
+		if s.ipCounts[req.IP] == 0 {
+			delete(s.ipCounts, req.IP)
+			filtered := s.IPs[:0]
+			for _, ip := range s.IPs {
+				if ip != req.IP {
+					filtered = append(filtered, ip)
+				}
+			}
+			s.IPs = filtered
+		}
 	}
 	mu.Unlock()
 }
@@ -89,6 +106,7 @@ func handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.ipCounts = make(map[string]int)
 	mu.Lock()
 	sessions[s.Token] = &s
 	mu.Unlock()
@@ -123,14 +141,16 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>Wormhole Dashboard</title>
     <style>
         body { font-family: monospace; padding: 20px; background: #0d0d0d; color: #e0e0e0; }
         h1 { color: #1D9E75; }
         table { width: 100%%; border-collapse: collapse; margin-top: 20px; }
         th { text-align: left; padding: 10px; border-bottom: 1px solid #333; color: #888; }
-        td { padding: 10px; border-bottom: 1px solid #1a1a1a; }
+        td { padding: 10px; border-bottom: 1px solid #1a1a1a; vertical-align: top; }
         a { color: #1D9E75; }
+        .ip { color: #aaa; display: block; }
     </style>
 </head>
 <body>
@@ -142,6 +162,7 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
                 <th>local</th>
                 <th>public url</th>
                 <th>connections</th>
+                <th>active ips</th>
                 <th>started</th>
             </tr>
         </thead>
@@ -156,17 +177,19 @@ func serveHome(w http.ResponseWriter, r *http.Request) {
                     const tbody = document.getElementById('sessions')
                     tbody.innerHTML = data.map(s => {
                         const started = new Date(s.StartTime).toLocaleTimeString()
+                        const ips = (s.IPs || []).map(ip => '<span class="ip">' + ip + '</span>').join('') || '—'
                         return '<tr>' +
                             '<td>' + s.Token + '</td>' +
                             '<td>' + s.LocalAddr + '</td>' +
                             '<td><a href="' + s.PublicURL + '" target="_blank">' + s.PublicURL + '</a></td>' +
                             '<td>' + s.Connections + '</td>' +
+                            '<td>' + ips + '</td>' +
                             '<td>' + started + '</td>' +
                             '</tr>'
                     }).join('')
                 })
         }
-i
+
         load()
         setInterval(load, 3000)
     </script>

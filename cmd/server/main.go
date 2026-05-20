@@ -148,7 +148,8 @@ func listenPublic(addr string) {
 				return
 			}
 
-			channel, requests, err := sshConn.OpenChannel("tunnel", nil)
+			remoteIP, _, _ := net.SplitHostPort(userConn.RemoteAddr().String())
+			channel, requests, err := sshConn.OpenChannel("tunnel", []byte(remoteIP))
 			if err != nil {
 				log.Println("open channel error:", err)
 				userConn.Close()
