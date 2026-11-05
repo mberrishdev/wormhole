@@ -38,10 +38,12 @@ func initialModel() model {
 	return model{width: 90, height: 32, values: [3]string{"lan-relay", "192.168.1.100", "2222"}}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd { return refreshTerminal() }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case terminalCheck:
+		return m, refreshTerminal()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.KeyMsg:

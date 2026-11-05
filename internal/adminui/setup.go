@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mberrishdev/wormhole/internal/config"
 	"github.com/mberrishdev/wormhole/internal/deploy"
 )
@@ -43,7 +44,7 @@ func LANHost() string {
 func newWizard(dir string, c config.Server) wizard {
 	return wizard{dir: dir, cfg: c, width: 90, height: 35, values: []string{c.Name, c.AdvertiseHost, strconv.Itoa(c.SSHPort), strconv.Itoa(c.PortStart), strconv.Itoa(c.PortEnd), strconv.Itoa(c.HTTPPort), c.Domain, dir}}
 }
-func (w wizard) Init() tea.Cmd { return nil }
+func (w wizard) Init() tea.Cmd { return refreshTerminal() }
 func (w wizard) configuration() (config.Server, error) {
 	c := w.cfg
 	c.Name = w.values[0]
@@ -61,6 +62,8 @@ func (w wizard) configuration() (config.Server, error) {
 }
 func (w wizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case terminalCheck:
+		return w, refreshTerminal()
 	case tea.WindowSizeMsg:
 		w.width, w.height = msg.Width, msg.Height
 	case generated:
@@ -75,6 +78,12 @@ func (w wizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		k := msg.String()
 		if k == "ctrl+c" {
 			return w, tea.Quit
+		}
+		if w.width < 32 || w.height < 12 {
+			if k == "q" {
+				return w, tea.Quit
+			}
+			return w, nil
 		}
 		if w.busy {
 			return w, nil
@@ -124,11 +133,14 @@ func (w wizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if w.stage == 1 {
 				count = 2
 			}
-			if k == "up" || k == "k" {
+			if k == "up" || k == "k" || k == "shift+tab" {
 				w.choice = (w.choice + count - 1) % count
 			}
-			if k == "down" || k == "j" {
+			if k == "down" || k == "j" || k == "tab" {
 				w.choice = (w.choice + 1) % count
+			}
+			if len(k) == 1 && k[0] >= '1' && int(k[0]-'1') < count {
+				w.choice = int(k[0] - '1')
 			}
 			if k == "enter" {
 				if w.stage == 0 {
@@ -174,6 +186,14 @@ func (w wizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case 3:
+			if k == "tab" || k == "down" || k == "j" || k == "up" || k == "k" {
+				rows := 6
+				if w.cfg.Mode == "hostname" {
+					rows = 7
+				}
+				count := max(1, w.height-9)
+				w.choice = (w.choice + 1) % ((rows + count - 1) / count)
+			}
 			if k == "g" || k == "enter" {
 				w.busy = true
 				c, dir := w.cfg, w.dir
@@ -188,8 +208,11 @@ func (w wizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return w, nil
 }
 func (w wizard) View() string {
-	if w.width < 72 || w.height < 32 {
-		return fmt.Sprintf("WORMHOLE / SETUP\nResize to at least 72 x 32 (current %d x %d).\nCtrl+C to cancel.\n", w.width, w.height)
+	if w.width < 32 || w.height < 12 {
+		return "Setup needs 32 columns, 12 rows.\nCtrl+C to exit.\n"
+	}
+	if w.width < 90 || w.height < 32 {
+		return w.compactView()
 	}
 	var body string
 	switch w.stage {
@@ -209,7 +232,7 @@ func (w wizard) View() string {
 			}
 			body += "\n\n"
 		}
-		body += "Up/down select   Enter continue   Esc back"
+		body += "Arrows / j,k / Tab select   Enter continue   Esc back"
 	case 2:
 		body = "3 / 4  NETWORK & FILES\n\n"
 		labels := []string{"Server name", "LAN IP / SSH host", "SSH port", "First tunnel port", "Last tunnel port", "HTTP backend port", "Domain (hostname mode)", "Output directory"}
@@ -252,6 +275,90 @@ func (w wizard) View() string {
 		body += "\n\nGenerating files..."
 	}
 	return frame("WORMHOLE / SETUP", body, w.width)
+}
+
+// compactView keeps every step usable in a standard 80x24 terminal and on
+// smaller SSH screens. Setup edits one field at a time; review is paginated.
+func (w wizard) compactView() string {
+	width := w.width - 1
+	line := func(s string) string { return ansi.Truncate(s, width, "…") }
+	var lines []string
+	lines = append(lines, accent.Render("WORMHOLE / SETUP"))
+	switch w.stage {
+	case 0, 1:
+		title := "1/4  Deployment"
+		options := []string{"[1] Docker Compose", "[2] Native", "[3] Kubernetes"}
+		if w.stage == 1 {
+			title = "2/4  Access mode"
+			options = []string{"[1] LAN IP + ports", "[2] Internal domain"}
+		}
+		lines = append(lines, title, "")
+		for i, option := range options {
+			if i == w.choice {
+				lines = append(lines, selected.Render("> "+option))
+			} else {
+				lines = append(lines, "  "+option)
+			}
+		}
+		lines = append(lines, "", "j/k, arrows or Tab: select", "Enter: continue  Esc: back", "q: quit")
+	case 2:
+		labels := []string{"Server name", "LAN IP / SSH host", "SSH port", "First tunnel port", "Last tunnel port", "HTTP backend port", "Domain (hostname mode)", "Output directory"}
+		value := w.values[w.field]
+		if w.editing {
+			value = w.buffer + "█"
+		}
+		if value == "" {
+			value = "(unused)"
+		}
+		if w.editing && ansi.StringWidth(value) > width {
+			value = ansi.Cut(value, ansi.StringWidth(value)-width+1, ansi.StringWidth(value))
+			value = "…" + value
+		}
+		lines = append(lines, fmt.Sprintf("3/4  Field %d of %d", w.field+1, len(labels)), "", labels[w.field], line(value), "")
+		if w.editing {
+			lines = append(lines, "Enter: save  Esc: cancel", "Ctrl+U: clear")
+		} else {
+			lines = append(lines, "j/k or Tab: previous/next field", "Enter: edit  r: review", "Esc: back  q: quit")
+		}
+		if w.message != "" {
+			lines = append(lines, line(w.message))
+		}
+	case 3:
+		c := w.cfg
+		rows := []string{
+			"Deployment: " + c.Deployment, "Name: " + c.Name,
+			"Server: " + net.JoinHostPort(c.AdvertiseHost, strconv.Itoa(c.SSHPort)),
+			"Mode: " + c.Mode,
+		}
+		if c.Mode == "ports" {
+			rows = append(rows, fmt.Sprintf("Ports: %d-%d", c.PortStart, c.PortEnd))
+		} else {
+			rows = append(rows, "Domain: "+c.Domain, fmt.Sprintf("HTTP port: %d", c.HTTPPort))
+		}
+		rows = append(rows, "Output: "+w.dir)
+		// Reserve room for the title, confirmation and keyboard hints.
+		count := max(1, w.height-9)
+		start := min(w.choice, (len(rows)-1)/count) * count
+		end := min(start+count, len(rows))
+		lines = append(lines, fmt.Sprintf("4/4  Review (%d/%d)", start/count+1, (len(rows)+count-1)/count), "")
+		for _, row := range rows[start:end] {
+			lines = append(lines, line(row))
+		}
+		lines = append(lines, accent.Render("Enter/g: Generate setup files"))
+		if len(rows) > count {
+			lines = append(lines, "Tab: more settings")
+		}
+		lines = append(lines, "Esc: back  q: cancel")
+		if w.message != "" {
+			lines = append(lines, line(w.message))
+		}
+	case 4:
+		lines = append(lines, accent.Render("SETUP GENERATED"), "", line(w.dir), "", "Read NEXT-STEPS.txt to start.", "Keep credentials private.", "", "Enter/q: exit")
+	}
+	if w.busy {
+		lines = append(lines, "Generating files...")
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 func frame(title, body string, width int) string {
 	width = min(width-4, 100)

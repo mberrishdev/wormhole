@@ -137,6 +137,10 @@ DNS, TLS certificates, firewall rules, and private load balancers are managed by
 
 ## Monitoring and configuration
 
+The setup wizard and monitor adapt to the terminal size, including standard 80×24 windows and smaller screens down to 32 columns by 12 rows. They recheck the reported terminal size once per second as a fallback for missing resize signals. A remote terminal client must still update its PTY dimensions and forward keyboard input.
+
+In setup, use arrows, `j`/`k`, or `Tab` to select; deployment and access choices also accept number keys. Press `Enter` to continue. Compact setup shows one editable field at a time, and short review screens use `Tab` to page through the settings.
+
 ```bash
 ./bin/wormhole-server config validate --config wormhole-setup/server.json
 ./bin/wormhole-server doctor --config wormhole-setup/server.json
