@@ -369,6 +369,5 @@ func frame(title, body string, width int) string {
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2).Width(width).Render(accent.Bold(true).Render(title)+"\n\n"+lipgloss.NewStyle().Width(width-4).Render(body)) + "\n"
 }
 func Setup(dir string, c config.Server) error {
-	_, err := tea.NewProgram(newWizard(dir, c), tea.WithAltScreen()).Run()
-	return err
+	return runProgram(newWizard(dir, c))
 }

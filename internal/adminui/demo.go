@@ -256,6 +256,5 @@ func (m model) View() string {
 }
 
 func Demo() error {
-	_, err := tea.NewProgram(initialModel(), tea.WithAltScreen()).Run()
-	return err
+	return runProgram(initialModel())
 }

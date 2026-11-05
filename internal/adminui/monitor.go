@@ -183,6 +183,5 @@ func (m monitor) compactView() string {
 	return strings.Join(lines, "\n") + "\n"
 }
 func Monitor(c config.Server) error {
-	_, err := tea.NewProgram(monitor{cfg: c, width: 90, height: 35, loading: true}, tea.WithAltScreen()).Run()
-	return err
+	return runProgram(monitor{cfg: c, width: 90, height: 35, loading: true})
 }
