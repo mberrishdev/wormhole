@@ -119,13 +119,18 @@ func testWindowsConsole(t *testing.T, native bool) {
 		}
 	}
 	await("1/4  Deployment")
-	write("\x1b[B") // native Windows arrow-key event via ConPTY
+	if native {
+		write("\x1b[B")
+	} else {
+		write("j")
+	}
 	write("\r")
 	await("2/4  Access mode")
 	write("\r")
 	await("3/4  Field")
 	write("r")
 	await("4/4  Review")
+	await("Deployment: native")
 	if err = windows.ResizePseudoConsole(console, windows.Coord{X: 110, Y: 40}); err != nil {
 		t.Fatal(err)
 	}
