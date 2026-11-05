@@ -38,12 +38,18 @@ func initialModel() model {
 	return model{width: 90, height: 32, values: [3]string{"lan-relay", "192.168.1.100", "2222"}}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd { return refreshTerminal() }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case terminalCheck:
+		return m, refreshTerminal()
 	case tea.WindowSizeMsg:
+		changed := m.width != msg.Width || m.height != msg.Height
 		m.width, m.height = msg.Width, msg.Height
+		if changed {
+			return m, tea.ClearScreen
+		}
 	case tea.KeyMsg:
 		key := msg.String()
 		if key == "ctrl+c" {
@@ -250,6 +256,5 @@ func (m model) View() string {
 }
 
 func Demo() error {
-	_, err := tea.NewProgram(initialModel(), tea.WithAltScreen()).Run()
-	return err
+	return runProgram(initialModel())
 }
