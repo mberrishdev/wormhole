@@ -1,142 +1,79 @@
 # Wormhole
 
-A lightweight self-hosted tunnel that exposes a local port to the public internet via an SSH relay server — similar to ngrok, but fully under your control.
+Share an app running on your laptop with people on your LAN or company VPN. An admin runs one Wormhole server; developers run the client; everyone else just opens a link.
 
----
+## Install
 
-## How it works
-
-Wormhole creates a secure tunnel between your local machine and a public SSH server.
-
-1. A server runs on a public machine and accepts SSH connections.
-2. A client connects to the server and requests a tunnel.
-3. The server assigns a unique readable token (e.g. `calm-fox-535990`).
-4. Traffic to `https://calm-fox-535990.wormhole.mberrishdev.me` is forwarded through the SSH tunnel to your local service.
-
-Each tunnel is isolated and ephemeral.
-
----
-
-## Requirements
-
-- Go 1.21+
-- A publicly accessible server (VPS / EC2 / etc.)
-- Wildcard DNS configured:
-
-```
-*.wormhole.your-domain.com → your server IP
-```
-
----
-
-## Install (recommended)
+On **Linux or macOS**, install the part you need:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mberrishdev/wormhole/main/install.sh | bash
+# Admin: install on the machine that will host the server
+curl -fsSL https://raw.githubusercontent.com/mberrishdev/wormhole/main/install.sh | bash -s -- server
+
+# Developer: install on your own laptop
+curl -fsSL https://raw.githubusercontent.com/mberrishdev/wormhole/main/install.sh | bash -s -- client
 ```
 
-After installation:
+The tools are installed in `~/.local/bin`. If your terminal cannot find them, run:
 
 ```bash
-wormhole
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
-## Build
+The installer downloads binaries from [GitHub Releases](https://github.com/mberrishdev/wormhole/releases). **This version must be released first.** Until then, build from source below.
 
-### Server
+On **Windows**, download the server or client `.exe` for your machine from Releases. Run it in PowerShell, for example `.\wormhole-server.exe init`.
+
+## Admin: set up the server
 
 ```bash
-go build -o wormhole-server ./cmd/server
+wormhole-server init
 ```
 
-### Client
+The wizard lets you choose the deployment, enter the server's existing LAN IP, and review the settings. Press **Generate setup files** to save them.
+
+For a quick start, choose **Native** and **LAN IP + ports**, then run:
 
 ```bash
-go build -o wormhole-client ./cmd/client
+wormhole-server serve --config wormhole-setup/server.json
 ```
 
----
+For **Docker Compose** or **Kubernetes**, follow the generated `wormhole-setup/NEXT-STEPS.txt`. These need Docker or a configured cluster; the server installer alone does not install them or provide a prebuilt container image.
 
-## Usage
+Send only `wormhole-setup/client.json` to developers through a trusted channel. Keep the rest of that directory private. Allow the chosen ports through your LAN/VPN firewall.
 
-### Server (public machine)
+## Developer: share your app
+
+Get `client.json` from your admin. Start your app, then run:
 
 ```bash
-./wormhole-server --ssh-port 2222
+wormhole-client --config client.json --local localhost:3000 --name frontend
 ```
 
-On first run a persistent Ed25519 host key is generated (`server.key`).
+Share the printed URL, such as `http://192.168.1.100:8081`. Teammates on the LAN/VPN can open it in a browser. Stop the client to close the tunnel.
 
----
+## View the server
 
-### Client (local machine)
+For a native server, open another terminal:
 
 ```bash
-./wormhole-client --server <your-server-ip>:2222 --local localhost:3000
+wormhole-server tui --config wormhole-setup/server.json
 ```
 
-Once connected:
+Use **1–4** to switch views and **q** to close the TUI. The server keeps running.
 
+## Build from source
+
+From a checkout containing this version, with **Go 1.25+** installed:
+
+```bash
+go build -o bin/wormhole-server ./cmd/server
+go build -o bin/wormhole-client ./cmd/client
+./bin/wormhole-server init
 ```
-tunnel is live at: https://calm-fox-535990.wormhole.mberrishdev.me
-dashboard: http://localhost:4040
-```
 
----
+Use `./bin/wormhole-server` and `./bin/wormhole-client` instead of the installed commands. On Windows, add `.exe` to the build output names.
 
-## Client flags
+Anyone who can reach a tunnel can access the app. Use your app's login and internal HTTPS when needed.
 
-| Flag         | Default              | Description                 |
-| ------------ | -------------------- | --------------------------- |
-| `--server`   | `13.62.136.105:2222` | SSH server address          |
-| `--password` | `secret123`          | SSH authentication password |
-| `--local`    | `localhost:3000`     | Local service to expose     |
-
----
-
-## Dashboard
-
-Every client automatically starts a local dashboard at `http://localhost:4040`.
-
-When multiple clients run on the same machine they share the same dashboard — the first client to start owns it, subsequent clients register into it over HTTP.
-
-| Column       | Description                                      |
-| ------------ | ------------------------------------------------ |
-| token        | Unique tunnel identifier                         |
-| local        | Local address being exposed                      |
-| public url   | Public HTTPS URL                                 |
-| connections  | Number of currently active connections           |
-| active ips   | IPs with an open connection right now            |
-| started      | Time the tunnel was established                  |
-
-The dashboard refreshes every 3 seconds. Sessions are removed automatically when the client exits.
-
----
-
-## Security notes
-
-This project is currently in early-stage development.
-
-Before production use:
-
-- Change the default SSH password (`secret123`)
-- Do not use `InsecureIgnoreHostKey` in production
-- Add firewall rules to restrict SSH port access
-
-Recommended production setup:
-
-- SSH key authentication instead of passwords
-- Host key verification (pin the server key on the client)
-- TLS termination via Caddy, Nginx, or Cloudflare
-
----
-
-## Architecture
-
-```
-Client (local machine)
-  ↓ SSH tunnel (port 2222)
-Wormhole server (VPS)
-  ↓ TLS (port 443) + wildcard DNS
-Public users → your local application
-```
+See the [deployment guide](docs/deployment.md) for Docker, Kubernetes, Windows services, domains, and configuration.

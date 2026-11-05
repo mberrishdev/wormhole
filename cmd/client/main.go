@@ -1,96 +1,78 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
-	"io"
+	"fmt"
 	"log"
-	"net"
-	"sync"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"golang.org/x/crypto/ssh"
-
-	"github.com/mberrishdev/wormhole/internal/dashboard"
+	"github.com/mberrishdev/wormhole/internal/client"
+	"github.com/mberrishdev/wormhole/internal/config"
+	"github.com/mberrishdev/wormhole/internal/protocol"
 )
 
 func main() {
-	server := flag.String("server", "13.62.136.105:2222", "SSH server address")
-	password := flag.String("password", "secret123", "SSH password")
-	local := flag.String("local", "localhost:3000", "local service address")
+	path := flag.String("config", "client.json", "client configuration from your administrator")
+	endpoint := flag.String("server", "", "override server host:port")
+	local := flag.String("local", "", "local app host:port")
+	name := flag.String("name", "", "optional stable tunnel name")
+	once := flag.Bool("once", false, "exit after disconnect instead of reconnecting")
 	flag.Parse()
-
-	config := &ssh.ClientConfig{
-		User: "wormhole",
-		Auth: []ssh.AuthMethod{
-			ssh.Password(*password),
-		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-
-	conn, err := ssh.Dial("tcp", *server, config)
-	if err != nil {
+	var c config.Client
+	if err := config.Read(*path, &c); err != nil {
 		log.Fatal(err)
 	}
-	defer conn.Close()
-
-	log.Println("connected to server")
-
-	ok, reply, err := conn.SendRequest("forward", true, nil)
-	log.Printf("ok=%v reply=%s err=%v", ok, string(reply), err)
-	if !ok || err != nil {
-		log.Fatal("forward request rejected")
+	if *endpoint != "" {
+		c.Server = *endpoint
 	}
-
-	token := string(reply)
-
-	dashboard.EnsureRunning(":4040")
-	dashboard.Register(token, *local, "https://"+token+".wormhole.mberrishdev.me")
-	defer dashboard.Unregister(token)
-
-	log.Printf("tunnel is live at: https://%s.wormhole.mberrishdev.me", token)
-	log.Println("dashboard: http://localhost:4040")
-
-	channels := conn.HandleChannelOpen("tunnel")
-
-	for newChannel := range channels {
-		ip := string(newChannel.ExtraData())
-		go handleChannel(newChannel, *local, token, ip)
+	if *local != "" {
+		c.Local = *local
 	}
-}
-
-func handleChannel(newChannel ssh.NewChannel, localAddr, token, ip string) {
-	channel, requests, err := newChannel.Accept()
-	if err != nil {
-		log.Println("accept channel error:", err)
-		return
+	if *name != "" {
+		c.Name = *name
 	}
-	defer channel.Close()
-
-	go ssh.DiscardRequests(requests)
-
-	localConn, err := net.Dial("tcp", localAddr)
-	if err != nil {
-		log.Println("local dial error:", err)
-		return
+	if err := client.Validate(c); err != nil {
+		log.Fatal(err)
 	}
-	defer localConn.Close()
-
-	dashboard.Connect(token, ip)
-	defer dashboard.Disconnect(token, ip)
-
-	log.Println("new tunnel connection")
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	go func() {
-		defer wg.Done()
-		io.Copy(channel, localConn)
-	}()
-
-	go func() {
-		defer wg.Done()
-		io.Copy(localConn, channel)
-	}()
-
-	wg.Wait()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	delay := time.Second
+	for {
+		connected := false
+		err := client.Session(ctx, c, func(r protocol.Registration) {
+			connected = true
+			delay = time.Second
+			fmt.Printf("Tunnel ready: %s → %s\n", r.URL, c.Local)
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		var rejected client.Rejected
+		if errors.As(err, &rejected) {
+			log.Fatal(err)
+		}
+		if *once {
+			if err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+		if connected {
+			log.Printf("tunnel disconnected: %v", err)
+		} else {
+			log.Printf("server unavailable: %v", err)
+		}
+		log.Printf("reconnecting in %s", delay)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, 10*time.Second)
+	}
 }
