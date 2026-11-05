@@ -32,6 +32,7 @@ type Tunnel struct {
 	Started     time.Time `json:"started"`
 	conn        *ssh.ServerConn
 	listener    net.Listener
+	visitors    map[net.Conn]bool
 }
 type Event struct {
 	Time    time.Time `json:"time"`
@@ -242,6 +243,9 @@ func (s *Server) handleClient(raw net.Conn) {
 				if t.listener != nil {
 					t.listener.Close()
 				}
+				for visitor := range t.visitors {
+					visitor.Close()
+				}
 				delete(s.tunnels, id)
 				s.eventLocked("Tunnel closed: " + id)
 			}
@@ -299,7 +303,7 @@ func (s *Server) register(conn *ssh.ServerConn, r protocol.Request) (*Tunnel, er
 	if _, ok := s.tunnels[id]; ok {
 		return nil, fmt.Errorf("tunnel name is already in use")
 	}
-	t := &Tunnel{ID: id, Owner: displayText(conn.User()), Local: displayText(r.Local), Started: time.Now(), conn: conn}
+	t := &Tunnel{ID: id, Owner: displayText(conn.User()), Local: displayText(r.Local), Started: time.Now(), conn: conn, visitors: map[net.Conn]bool{}}
 	if s.cfg.Mode == "ports" {
 		for p := s.cfg.PortStart; p <= s.cfg.PortEnd; p++ {
 			l, err := net.Listen("tcp", net.JoinHostPort(s.cfg.ListenIP, strconv.Itoa(p)))
@@ -345,6 +349,14 @@ func (s *Server) acceptVisitors(t *Tunnel) {
 		if s.track(c) {
 			go func() {
 				defer s.untrack(c)
+				s.mu.Lock()
+				if s.tunnels[t.ID] != t {
+					s.mu.Unlock()
+					return
+				}
+				t.visitors[c] = true
+				s.mu.Unlock()
+				defer func() { s.mu.Lock(); delete(t.visitors, c); s.mu.Unlock() }()
 				s.changeConnections(t, 1)
 				defer s.changeConnections(t, -1)
 				ip, _, _ := net.SplitHostPort(c.RemoteAddr().String())
@@ -366,6 +378,7 @@ func (s *Server) Snapshot() Status {
 		copy := *t
 		copy.conn = nil
 		copy.listener = nil
+		copy.visitors = nil
 		st.Tunnels = append(st.Tunnels, copy)
 	}
 	return st

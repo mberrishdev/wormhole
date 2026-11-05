@@ -163,6 +163,12 @@ func TestLANPortTunnelLifecycle(t *testing.T) {
 	if err = client.Session(rejectCtx, extra, nil); err == nil || !strings.Contains(err.Error(), "no available tunnel ports") {
 		t.Fatalf("expected capacity error, got %v", err)
 	}
+	idle, err := net.Dial("tcp", strings.TrimPrefix(reg.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idle.Close()
+	waitFor(t, func() bool { st := s.Snapshot(); return len(st.Tunnels) == 1 && st.Tunnels[0].Connections > 0 })
 	cancel()
 	select {
 	case <-done:
@@ -170,6 +176,13 @@ func TestLANPortTunnelLifecycle(t *testing.T) {
 		t.Fatal("client did not stop")
 	}
 	waitFor(t, func() bool { return len(s.Snapshot().Tunnels) == 0 })
+	idle.SetReadDeadline(time.Now().Add(time.Second))
+	var one [1]byte
+	if _, err := idle.Read(one[:]); err == nil {
+		t.Fatal("idle visitor was not closed on disconnect")
+	} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		t.Fatal("idle visitor remained open after disconnect")
+	}
 	// Closed tunnel ports can be allocated again, preserving the server identity.
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	defer cancel2()

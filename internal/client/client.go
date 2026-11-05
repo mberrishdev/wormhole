@@ -47,6 +47,8 @@ func (e Rejected) Error() string { return e.Reason }
 
 // Session runs one tunnel until it disconnects or the context is cancelled.
 func Session(ctx context.Context, c config.Client, ready func(protocol.Registration)) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	if err := Validate(c); err != nil {
 		return err
 	}
@@ -160,6 +162,15 @@ func forward(ctx context.Context, in ssh.NewChannel, local string) {
 		return
 	}
 	defer upstream.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			upstream.Close()
+		case <-done:
+		}
+	}()
 	ch, requests, err := in.Accept()
 	if err != nil {
 		return

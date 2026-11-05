@@ -46,9 +46,16 @@ jobs:
           echo wormhole-container-ok > "$APP_DIR/index.html"
           python3 -m http.server 3000 --bind 127.0.0.1 --directory "$APP_DIR" &
           APP_PID=$!
+          curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:3000/ > /dev/null
           ./bin/wormhole-client --config wormhole-setup/client.json --local 127.0.0.1:3000 --name smoke > /tmp/wormhole-client.log 2>&1 &
           CLIENT_PID=$!
           trap 'kill "$APP_PID" "$CLIENT_PID"' EXIT
+          for ATTEMPT in $(seq 1 20); do
+            if grep -q 'Tunnel ready:' /tmp/wormhole-client.log; then break; fi
+            if ! kill -0 "$CLIENT_PID"; then cat /tmp/wormhole-client.log; exit 1; fi
+            sleep 1
+          done
+          grep 'Tunnel ready:' /tmp/wormhole-client.log
           RESPONSE=$(curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 --max-time 30 http://127.0.0.1:8081/)
           test "$RESPONSE" = wormhole-container-ok
       - name: Stop containers
