@@ -22,6 +22,14 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
       - run: go build ./cmd/server ./cmd/client
+      - name: Build Windows preview
+        if: runner.os == 'Windows'
+        run: go build -o bin/wormhole-server.exe ./cmd/server
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: wormhole-server-windows-amd64-preview
+          path: bin/wormhole-server.exe
       - if: runner.os == 'Linux'
         run: go test -race ./...
 
