@@ -45,7 +45,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case terminalCheck:
 		return m, refreshTerminal()
 	case tea.WindowSizeMsg:
+		changed := m.width != msg.Width || m.height != msg.Height
 		m.width, m.height = msg.Width, msg.Height
+		if changed {
+			return m, tea.ClearScreen
+		}
 	case tea.KeyMsg:
 		key := msg.String()
 		if key == "ctrl+c" {

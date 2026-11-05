@@ -65,7 +65,11 @@ func (w wizard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case terminalCheck:
 		return w, refreshTerminal()
 	case tea.WindowSizeMsg:
+		changed := w.width != msg.Width || w.height != msg.Height
 		w.width, w.height = msg.Width, msg.Height
+		if changed {
+			return w, tea.ClearScreen
+		}
 	case generated:
 		w.busy = false
 		if msg.err != nil {

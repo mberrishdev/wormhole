@@ -130,6 +130,27 @@ func TestWindowsConsoleHelper(t *testing.T) {
 	if os.Getenv("WORMHOLE_CONSOLE_HELPER") != "1" {
 		return
 	}
+	// GitHub's runner gives its test process redirected standard handles.
+	// Attaching to ConPTY does not replace those inherited handles; attach
+	// both Go's streams and the Win32 standard handles to the child console.
+	input, err := os.OpenFile("CONIN$", os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = windows.SetStdHandle(windows.STD_INPUT_HANDLE, windows.Handle(input.Fd())); err != nil {
+		t.Fatal(err)
+	}
+	if err = windows.SetStdHandle(windows.STD_OUTPUT_HANDLE, windows.Handle(output.Fd())); err != nil {
+		t.Fatal(err)
+	}
+	if err = windows.SetStdHandle(windows.STD_ERROR_HANDLE, windows.Handle(output.Fd())); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdin, os.Stdout, os.Stderr = input, output, output
 	watchdog := time.AfterFunc(8*time.Second, func() { panic("Windows TUI watchdog: console stopped responding") })
 	defer watchdog.Stop()
 	if err := Setup("unused-console-test-output", config.Defaults()); err != nil {

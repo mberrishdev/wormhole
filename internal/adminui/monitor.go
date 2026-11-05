@@ -37,7 +37,11 @@ func (m monitor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case terminalCheck:
 		return m, refreshTerminal()
 	case tea.WindowSizeMsg:
+		changed := m.width != msg.Width || m.height != msg.Height
 		m.width, m.height = msg.Width, msg.Height
+		if changed {
+			return m, tea.ClearScreen
+		}
 	case statusResult:
 		m.loading = false
 		m.status, m.err = msg.status, msg.err
