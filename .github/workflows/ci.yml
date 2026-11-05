@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go build ./cmd/server ./cmd/client
+      - if: runner.os == 'Linux'
+        run: go test -race ./...
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Generate and start Compose installation
+        run: |
+          go run ./cmd/server init --non-interactive --deployment compose --host 127.0.0.1
+          docker compose -f wormhole-setup/compose.yaml config --quiet
+          docker compose -f wormhole-setup/compose.yaml up -d --build --wait
+      - name: Forward a real HTTP request through the container
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -o bin/wormhole-client ./cmd/client
+          APP_DIR=$(mktemp -d)
+          echo wormhole-container-ok > "$APP_DIR/index.html"
+          python3 -m http.server 3000 --bind 127.0.0.1 --directory "$APP_DIR" &
+          APP_PID=$!
+          ./bin/wormhole-client --config wormhole-setup/client.json --local 127.0.0.1:3000 --name smoke > /tmp/wormhole-client.log 2>&1 &
+          CLIENT_PID=$!
+          trap 'kill "$APP_PID" "$CLIENT_PID"' EXIT
+          RESPONSE=$(curl --fail --silent --show-error --retry 15 --retry-connrefused --retry-delay 1 --max-time 30 http://127.0.0.1:8081/)
+          test "$RESPONSE" = wormhole-container-ok
+      - name: Stop containers
+        if: always()
+        run: docker compose -f wormhole-setup/compose.yaml down

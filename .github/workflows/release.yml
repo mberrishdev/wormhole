@@ -1,4 +1,4 @@
-name: release-client
+name: release
 
 on:
   workflow_dispatch:
@@ -59,25 +59,28 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
 
-      - name: Build client
+      - name: Test
+        run: go test ./...
+
+      - name: Build server and client
         run: |
           mkdir -p dist
 
-          OUT="dist/wormhole-client-${{ matrix.goos }}-${{ matrix.goarch }}"
-
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            OUT="${OUT}.exe"
-          fi
-
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
-          go build -o $OUT ./cmd/client
+          for ROLE in server client; do
+            OUT="dist/wormhole-${ROLE}-${{ matrix.goos }}-${{ matrix.goarch }}"
+            if [ "${{ matrix.goos }}" = "windows" ]; then
+              OUT="${OUT}.exe"
+            fi
+            CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} \
+              go build -trimpath -o "$OUT" "./cmd/$ROLE"
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: client-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
 
   release:
@@ -94,6 +97,9 @@ jobs:
         run: |
           find dist -type f -exec mv {} dist/ \;
           find dist -type d -empty -delete
+
+      - name: Checksums
+        run: cd dist && sha256sum wormhole-* > SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

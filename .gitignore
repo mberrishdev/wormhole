@@ -7,3 +7,7 @@ wormhole-client
 *.out
 
 server.key
+.DS_Store
+/bin/
+/wormhole-setup/
+/output/

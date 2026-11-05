@@ -1,0 +1,12 @@
+.git
+.DS_Store
+wormhole-server
+wormhole-client
+*.exe
+server.key
+wormhole-setup
+**/secrets
+**/client.json
+**/kubernetes.json
+testsite
+output
